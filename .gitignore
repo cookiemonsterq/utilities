@@ -1,0 +1,27 @@
+# Ignore editor swap/backup files
+*~
+*.swp
+*.swo
+
+# Ignore OS metadata
+.DS_Store
+Thumbs.db
+
+# Ignore IDE settings
+.vscode/
+.idea/
+
+# Ignore logs and temporary files
+*.log
+tmp/
+*.tmp
+
+# Ignore shellcheck cache (if used)
+.shellcheckrc
+
+# Ignore node artifacts if accidentally exists
+node_modules/
+
+# Ignore any built binaries for scripts
+*.out
+*.exe
