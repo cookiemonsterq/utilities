@@ -25,3 +25,6 @@ node_modules/
 # Ignore any built binaries for scripts
 *.out
 *.exe
+
+# Ignore Claude AI files if any.
+.claude/
