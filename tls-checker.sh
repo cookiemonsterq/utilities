@@ -2,7 +2,7 @@
 
 # TLS Certificate Checker TUI
 # Cross-platform: works on macOS (BSD) and Linux (GNU)
-# Usage: ./tls-checker.sh
+# Usage: ./tls-checker.sh [host|url|host:port]...   (no args = interactive TUI)
 
 # ==========================================
 # Colors (ANSI, compatible on both platforms)
@@ -112,6 +112,7 @@ parse_date() {
 check_certificate() {
     local host="$1"
     local port="$2"
+    local status=0
 
     echo -e "\n${YELLOW}⏳ Checking certificate for ${BOLD}${host}:${port}${NC}...\n"
     print_separator
@@ -124,12 +125,13 @@ check_certificate() {
         cert_output=$(echo | openssl s_client -servername "$host" -connect "${host}:${port}" 2>/dev/null)
         if [[ $? -ne 0 ]] || [[ -z "$cert_output" ]]; then
             echo -e "${RED}❌ Could not connect to ${host}:${port}${NC}"
-            return 1
+            return 2
         fi
         # Parse openssl output directly and return
         echo "$cert_output" | openssl x509 -noout -dates -subject -issuer 2>/dev/null
         print_separator
-        return
+        echo "$cert_output" | openssl x509 -noout -checkend 0 >/dev/null 2>&1 || status=1
+        return $status
     fi
 
     # Parse and display curl output
@@ -149,6 +151,7 @@ check_certificate() {
                 days_left=$(( (expire_epoch - current_epoch) / 86400 ))
                 if [[ $days_left -lt 0 ]]; then
                     echo -e "${RED}⚠️  EXPIRED ${days_left#-} days ago!${NC}"
+                    status=1
                 elif [[ $days_left -lt 30 ]]; then
                     echo -e "${YELLOW}⚠️  Expires in ${days_left} days${NC}"
                 else
@@ -163,10 +166,34 @@ check_certificate() {
             echo -e "\n${GREEN}✅ Certificate verification: OK${NC}"
         elif [[ "$line" == *"SSL certificate verify"* ]]; then
             echo -e "\n${RED}❌ Certificate verification: FAILED${NC}"
+            status=1
         fi
     done <<< "$cert_output"
 
     print_separator
+    return $status
+}
+
+# Check one or more targets (host, url, host:port, or host followed by a bare port).
+# A bare number after a host is treated as that host's port (e.g. example.com 8443).
+# Returns the worst result: 0 = all valid, 1 = expired/invalid, 2 = error
+check_targets() {
+    local targets=() arg target rc worst=0
+    for arg in "$@"; do
+        if [[ "$arg" =~ ^[0-9]+$ && ${#targets[@]} -gt 0 ]]; then
+            targets[${#targets[@]}-1]="${targets[${#targets[@]}-1]%%/*}:${arg}"
+        else
+            targets+=("$arg")
+        fi
+    done
+
+    for target in "${targets[@]}"; do
+        extract_host_port "$target"
+        check_certificate "$HOST" "$PORT"
+        rc=$?
+        [[ $rc -gt $worst ]] && worst=$rc
+    done
+    return $worst
 }
 
 # ==========================================
@@ -178,18 +205,19 @@ main_menu() {
         clear_screen
         print_header
 
-        echo -e "${BOLD}Enter a URL or hostname to check its TLS certificate${NC}"
+        echo -e "${BOLD}Enter one or more URLs or hostnames to check its TLS certificate${NC}"
         echo -e "${CYAN}Examples:${NC}"
         echo "  • example.com"
         echo "  • https://example.com/path/"
         echo "  • example.com:8443"
+        echo "  • example.com google.com:8443 (multiple, space-separated)"
         echo ""
         echo -e "Type ${YELLOW}'q'${NC} or ${YELLOW}'quit'${NC} to exit"
         echo ""
         print_separator
         echo ""
 
-        read -p "🔗 Enter URL: " url_input
+        read -p "🔗 Enter URL(s): " url_input
 
         url_lower=$(echo "$url_input" | tr '[:upper:]' '[:lower:]')
         if [[ "$url_lower" == "q" ]] || [[ "$url_lower" == "quit" ]] || [[ "$url_lower" == "exit" ]]; then
@@ -203,12 +231,19 @@ main_menu() {
             continue
         fi
 
-        extract_host_port "$url_input"
-        check_certificate "$HOST" "$PORT"
+        read -ra url_list <<< "$url_input"
+        check_targets "${url_list[@]}"
 
         echo ""
         read -p "Press Enter to continue..."
     done
 }
+
+# Non-interactive mode: ./tls-checker.sh <host|url|host:port>...
+# Exit codes: 0 = all valid, 1 = expired/invalid, 2 = error (worst result wins)
+if [[ $# -ge 1 ]]; then
+    check_targets "$@"
+    exit $?
+fi
 
 main_menu
