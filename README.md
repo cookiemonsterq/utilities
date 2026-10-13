@@ -19,6 +19,10 @@ Random utilities free to use
 
   `./tls-checker.sh example.com 443 30`  # warns when cert expires in <= 30 days
 
+- Check a list of domains from a file (one per line; `host`, `host:port` or `host port`; blank lines and `#` comments ignored):
+
+  `./tls-checker.sh -f domains.txt`  # can be combined with extra hosts on the command line
+
 ### Description
 
 1. Connects to the target host and port using OpenSSL.
