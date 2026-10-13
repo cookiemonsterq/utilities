@@ -2,7 +2,7 @@
 
 # TLS Certificate Checker TUI
 # Cross-platform: works on macOS (BSD) and Linux (GNU)
-# Usage: ./tls-checker.sh [host|url|host:port]...   (no args = interactive TUI)
+# Usage: ./tls-checker.sh [-f file] [host|url|host:port]...   (no args = interactive TUI)
 
 # ==========================================
 # Colors (ANSI, compatible on both platforms)
@@ -109,6 +109,23 @@ parse_date() {
     echo "$epoch"
 }
 
+# Print the Subject Alternative Names of a certificate.
+# Reads `openssl s_client` output (or a PEM) on stdin.
+print_san() {
+    local sans
+    sans=$(openssl x509 -noout -text 2>/dev/null \
+        | grep -A1 'Subject Alternative Name' | tail -n +2 \
+        | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -v '^$')
+    if [[ -z "$sans" ]]; then
+        echo -e "${BOLD}🌐 SAN:${NC}     ${YELLOW}none${NC}"
+        return
+    fi
+    echo -e "${BOLD}🌐 SAN ($(echo "$sans" | wc -l | tr -d ' ')):${NC}"
+    while IFS= read -r san; do
+        echo "   • $san"
+    done <<< "$sans"
+}
+
 check_certificate() {
     local host="$1"
     local port="$2"
@@ -129,6 +146,7 @@ check_certificate() {
         fi
         # Parse openssl output directly and return
         echo "$cert_output" | openssl x509 -noout -dates -subject -issuer 2>/dev/null
+        echo "$cert_output" | print_san
         print_separator
         echo "$cert_output" | openssl x509 -noout -checkend 0 >/dev/null 2>&1 || status=1
         return $status
@@ -169,6 +187,8 @@ check_certificate() {
             status=1
         fi
     done <<< "$cert_output"
+
+    echo | openssl s_client -servername "$host" -connect "${host}:${port}" 2>/dev/null | print_san
 
     print_separator
     return $status
@@ -241,8 +261,36 @@ main_menu() {
 
 # Non-interactive mode: ./tls-checker.sh <host|url|host:port>...
 # Exit codes: 0 = all valid, 1 = expired/invalid, 2 = error (worst result wins)
+# Targets can also be read from a file with -f/--file (one per line; blank lines
+# and lines starting with # are ignored; "host port" on one line is allowed).
 if [[ $# -ge 1 ]]; then
-    check_targets "$@"
+    args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--file)
+                if [[ -z "$2" || ! -r "$2" ]]; then
+                    echo -e "${RED}❌ Cannot read file: ${2:-<missing>}${NC}" >&2
+                    exit 2
+                fi
+                while IFS= read -r line || [[ -n "$line" ]]; do
+                    line="${line%%#*}"
+                    line="${line//$'\r'/}"
+                    read -ra parts <<< "$line"
+                    [[ ${#parts[@]} -gt 0 ]] && args+=("${parts[0]}") && [[ ${#parts[@]} -gt 1 ]] && args+=("${parts[1]}")
+                done < "$2"
+                shift 2
+                ;;
+            *)
+                args+=("$1")
+                shift
+                ;;
+        esac
+    done
+    if [[ ${#args[@]} -eq 0 ]]; then
+        echo -e "${RED}❌ No targets to check${NC}" >&2
+        exit 2
+    fi
+    check_targets "${args[@]}"
     exit $?
 fi
 
